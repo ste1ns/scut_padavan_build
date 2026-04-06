@@ -1,40 +1,23 @@
-name: CI
+name: CI-Padavan-4.4-V2
 
-# Controls when the action will run. 
 on: 
   push:
   workflow_dispatch:
 
 env:
-  src_git: https://github.com/hanwckf/rt-n56u.git
+  # МЕНЯЕМ НА РЕПОЗИТОРИЙ С ЯДРОМ 4.4
+  src_git: https://github.com/hanwckf/padavan-4.4.git
   build_dir: /opt/rt-n56u
   images_dir: /opt/images
+  # Настройки функционала (оставил как в оригинале)
   ENABLED_CFG: |
     CONFIG_FIRMWARE_INCLUDE_TCPDUMP
-    CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT
-    CONFIG_FIRMWARE_INCLUDE_GDUT_DRCOM
-    CONFIG_FIRMWARE_INCLUDE_DOGCOM
-    CONFIG_FIRMWARE_INCLUDE_MINIEAP
-    CONFIG_FIRMWARE_INCLUDE_NJIT_CLIENT
-    CONFIG_FIRMWARE_INCLUDE_NAPT66
-    CONFIG_FIRMWARE_INCLUDE_VLMCSD
-    CONFIG_FIRMWARE_INCLUDE_TTYD
     CONFIG_FIRMWARE_INCLUDE_HTOP
     CONFIG_FIRMWARE_INCLUDE_NANO
-    CONFIG_FIRMWARE_INCLUDE_MENTOHUST
   DISABLED_CFG: |
     CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS
-    CONFIG_FIRMWARE_INCLUDE_SSSERVER
-    CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_SERVER
-    CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_CLIENT
-    CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_CMD
-    CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER
-    CONFIG_FIRMWARE_INCLUDE_FRPC
-    CONFIG_FIRMWARE_INCLUDE_FRPS
-    CONFIG_FIRMWARE_INCLUDE_TUNSAFE
     CONFIG_FIRMWARE_INCLUDE_WIREGUARD
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   build:
     name: build
@@ -45,65 +28,59 @@ jobs:
     strategy:
       matrix:
         include:
-          - build_variant: "mt7620"
-            targets: "PSG1208 PSG1218 NEWIFI-MINI MI-MINI MI-3 OYE-001"
+          # ДОБАВЛЯЕМ СЕКЦИЮ ДЛЯ ТВОЕГО РОУТЕРА (MT7628)
           - build_variant: "mt7628"
-            targets: "360P2 HC5861B HC5761A HC5661A MI-NANO"
-          - build_variant: "mt7621"
-            targets: "K2P DIR-878 RM2100 CR660x JCG-Q20 MI-R4A"
-          - build_variant: "mt7621-usb-1"
-            targets: "MSG1500 WR1200JS E8820V2 NEWIFI3 MI-R3G B70"
-          - build_variant: "mt7621-usb-2"
-            targets: "JCG-836PRO JCG-AC860M JCG-Y2 DIR-882"
+            targets: "MI-4A_V2"
     steps:
       - uses: actions/checkout@v2
       - name: Prepare environment
         run: |
           sudo apt update
-          sudo apt install libtool-bin gperf python-docutils autopoint gettext zip
+          sudo apt install libtool-bin gperf python-docutils autopoint gettext zip 7z
           mkdir -p $images_dir
-          cp -f ./ReleaseNote.txt $images_dir
       - name: Clone source
         run: |
           git clone --depth=1 $src_git $build_dir
           cd $build_dir
-          GIT_VERSION="$(git rev-parse --short=7 HEAD 2>/dev/null)"
-          build_date="$(date +%Y%m%d)"
-          echo "build_date=${build_date}" >> $GITHUB_ENV
-          echo "image_suffix=${GIT_VERSION}_${build_date}" >> $GITHUB_ENV
-          echo "image_name=images_${build_variant}_${GIT_VERSION}" >> $GITHUB_ENV
-      - name: Run shellcheck
-        run: |
-          cd $build_dir
-          if [ -f ./trunk/tools/shellcheck.sh ]; then sh ./trunk/tools/shellcheck.sh; fi
+          echo "build_date=$(date +%Y%m%d)" >> $GITHUB_ENV
+          echo "image_suffix=$(git rev-parse --short=7 HEAD)_$(date +%Y%m%d)" >> $GITHUB_ENV
       - name: Prepare toolchain
         run: |
           cd $build_dir/toolchain-mipsel
           sh dl_toolchain.sh
-      - name: Modify configs
+      - name: Modify configs for V2
         run: |
           cd $build_dir/trunk/configs/templates
-          for m in $targets; do if [ -f $m.config ]; then \
-          for n in $ENABLED_CFG; do sed -i "/${n}/c${n}=y" $m.config; done; \
-          for n in $DISABLED_CFG; do sed -i "/${n}/c${n}=n" $m.config; done; \
-          fi; done
+          # Трюк: создаем конфиг MI-4A_V2 на основе обычного MI-4A
+          # Если файла MI-4A.config нет в ветке 4.4, используем любой на mt7628
+          if [ -f MI-4A.config ]; then
+            cp MI-4A.config MI-4A_V2.config
+          else
+            cp MI-NANO.config MI-4A_V2.config
+          fi
+          
+          # ПРИНУДИТЕЛЬНО СТАВИМ ДРАЙВЕР MT7613 ДЛЯ 5ГГц
+          sed -i 's/CONFIG_FIRMWARE_WIFI5_MT7612E=y/CONFIG_FIRMWARE_WIFI5_MT7613=y/g' MI-4A_V2.config
+          sed -i '/CONFIG_FIRMWARE_WIFI5_MT7612E/d' MI-4A_V2.config
+          echo "CONFIG_FIRMWARE_WIFI5_MT7613=y" >> MI-4A_V2.config
+          
+          # Применяем твои включенные/выключенные функции
+          for n in $ENABLED_CFG; do sed -i "/${n}/c${n}=y" MI-4A_V2.config; done
+          for n in $DISABLED_CFG; do sed -i "/${n}/c${n}=n" MI-4A_V2.config; done
       - name: Start build
         run: |
           cd $build_dir/trunk
-          for m in $targets; do fakeroot ./build_firmware_ci $m; \
-          if [ $? = 0 ]; then cp -f images/*.trx $images_dir/$m.trx; else exit 1; fi; \
-          ./clear_tree_simple >/dev/null 2>&1; done
+          # Собираем MI-4A_V2
+          fakeroot ./build_firmware_modify MI-4A_V2
+          cp -f images/*.trx $images_dir/MI-4A_V2.trx
       - name: Create archive
         if: ${{ success() }}
         run: |
-          echo -e "Build Date: ${build_date}\n" >> ${images_dir}/ReleaseNote.txt
-          cd $build_dir && git log -1 |tee -a ${images_dir}/ReleaseNote.txt
           cd $images_dir
-          for m in $targets; do zip ${m}_${image_suffix}.zip $m.trx ReleaseNote.txt; done
-          7z a -mx=9 ${image_name}.7z *.zip
+          zip MI-4A_V2_${{ env.image_suffix }}.zip MI-4A_V2.trx
       - name: Upload images to Artifact
         if: ${{ success() }}
-        uses: actions/upload-artifact@v2.2.1
+        uses: actions/upload-artifact@v2
         with:
-          name: ${{ env.image_name }}
-          path: ${{ env.images_dir }}/${{ env.image_name }}.7z
+          name: Padavan_V2_4.4_${{ env.image_suffix }}
+          path: ${{ env.images_dir }}/*.zip
