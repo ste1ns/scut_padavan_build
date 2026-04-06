@@ -5,7 +5,6 @@ on:
   workflow_dispatch:
 
 env:
-  # Используем основную ветку, где точно есть поддержка MT7628
   src_git: https://github.com/hanwckf/rt-n56u.git
   build_dir: /opt/rt-n56u
   images_dir: /opt/images
@@ -36,7 +35,8 @@ jobs:
       - name: Prepare environment
         run: |
           sudo apt update
-          sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext zip p7zip-full build-essential libssl-dev
+          # Добавлен libltdl-dev для исправления ошибки ipset
+          sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext zip p7zip-full build-essential libssl-dev libltdl-dev
           mkdir -p $images_dir
 
       - name: Clone source
@@ -54,29 +54,21 @@ jobs:
       - name: Modify configs for Mi 4A V2
         run: |
           cd $build_dir/trunk/configs/templates
-          
-          # В этой ветке точно есть MI-NANO.config, используем его как базу
           cp MI-NANO.config MI-4A_V2.config
           
-          # Заменяем драйвер 5ГГц на MT7613 (для ревизии v2)
+          # Активация драйвера MT7613 для 5ГГц
           sed -i 's/CONFIG_FIRMWARE_WIFI5_MT7612E=y/CONFIG_FIRMWARE_WIFI5_MT7613=y/g' MI-4A_V2.config
-          
-          # Если строки нет, добавляем принудительно
           if ! grep -q "CONFIG_FIRMWARE_WIFI5_MT7613" MI-4A_V2.config; then
             echo "CONFIG_FIRMWARE_WIFI5_MT7613=y" >> MI-4A_V2.config
           fi
           
-          # Применяем кастомные опции
           for n in $ENABLED_CFG; do sed -i "/${n}/c${n}=y" MI-4A_V2.config; done
           for n in $DISABLED_CFG; do sed -i "/${n}/c${n}=n" MI-4A_V2.config; done
 
       - name: Start build
         run: |
           cd $build_dir/trunk
-          # Пробуем запустить сборку. В этой ветке обычно работает build_firmware_modify
           fakeroot ./build_firmware_modify MI-4A_V2
-          
-          # Ищем получившийся файл и копируем в папку артефактов
           find images/ -name "*.trx" -exec cp -f {} $images_dir/MI-4A_V2.trx \;
 
       - name: Create archive
