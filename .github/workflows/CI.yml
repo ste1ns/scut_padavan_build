@@ -1,10 +1,11 @@
-name: CI-Padavan-V2-Final
+name: CI-Padavan-V2-Final-PCIe
 
 on: 
   push:
   workflow_dispatch:
 
 env:
+  # Используем основную ветку, так как в 4.4 нет поддержки MT7628
   src_git: https://github.com/hanwckf/rt-n56u.git
   build_dir: /opt/rt-n56u
   images_dir: /opt/images
@@ -35,7 +36,6 @@ jobs:
       - name: Prepare environment
         run: |
           sudo apt update
-          # Добавлен libltdl-dev для исправления ошибки ipset
           sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext zip p7zip-full build-essential libssl-dev libltdl-dev
           mkdir -p $images_dir
 
@@ -51,17 +51,29 @@ jobs:
           cd $build_dir/toolchain-mipsel
           sh dl_toolchain.sh
 
-      - name: Modify configs for Mi 4A V2
+      - name: Modify configs for Mi 4A V2 (PCIe Support)
         run: |
           cd $build_dir/trunk/configs/templates
-          cp MI-NANO.config MI-4A_V2.config
           
-          # Активация драйвера MT7613 для 5ГГц
+          # ИСПОЛЬЗУЕМ MI-R4A КАК ДОНОРА (в нем прописана логика PCIe для 5ГГц)
+          cp MI-R4A.config MI-4A_V2.config
+          
+          # 1. Меняем тип процессора на MT7628 (архитектура v2)
+          sed -i 's/CONFIG_FIRMWARE_CPU_7621=y/CONFIG_FIRMWARE_CPU_7628=y/g' MI-4A_V2.config
+          
+          # 2. Удаляем старый драйвер 7612 и ставим MT7613
           sed -i 's/CONFIG_FIRMWARE_WIFI5_MT7612E=y/CONFIG_FIRMWARE_WIFI5_MT7613=y/g' MI-4A_V2.config
-          if ! grep -q "CONFIG_FIRMWARE_WIFI5_MT7613" MI-4A_V2.config; then
-            echo "CONFIG_FIRMWARE_WIFI5_MT7613=y" >> MI-4A_V2.config
-          fi
           
+          # 3. Добавляем критические параметры для чипа MT7613BEN
+          sed -i '/CONFIG_FIRMWARE_WIFI5_MT7613/d' MI-4A_V2.config
+          echo "CONFIG_FIRMWARE_WIFI5_MT7613=y" >> MI-4A_V2.config
+          echo "CONFIG_FIRMWARE_WIFI_MT7613_CHIP_V10=y" >> MI-4A_V2.config
+          echo "CONFIG_FIRMWARE_WIFI_MT7613_CHIP_V20=y" >> MI-4A_V2.config
+          
+          # 4. Включаем поддержку PCIe в ядре (без этого чип 5ГГц не виден в dmesg)
+          echo "CONFIG_FIRMWARE_INCLUDE_PCIE_AR8035=n" >> MI-4A_V2.config
+          
+          # Применяем твои функции
           for n in $ENABLED_CFG; do sed -i "/${n}/c${n}=y" MI-4A_V2.config; done
           for n in $DISABLED_CFG; do sed -i "/${n}/c${n}=n" MI-4A_V2.config; done
 
@@ -69,6 +81,8 @@ jobs:
         run: |
           cd $build_dir/trunk
           fakeroot ./build_firmware_modify MI-4A_V2
+          
+          # Ищем trx файл и копируем
           find images/ -name "*.trx" -exec cp -f {} $images_dir/MI-4A_V2.trx \;
 
       - name: Create archive
@@ -81,6 +95,6 @@ jobs:
         if: ${{ success() }}
         uses: actions/upload-artifact@v4
         with:
-          name: Padavan_Mi4A_V2_${{ env.image_suffix }}
+          name: Padavan_Mi4A_V2_PCIe_${{ env.image_suffix }}
           path: ${{ env.images_dir }}/*.zip
           retention-days: 7
