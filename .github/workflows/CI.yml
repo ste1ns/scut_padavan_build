@@ -1,11 +1,12 @@
-name: CI-Padavan-4.4-V2
+name: CI-Padavan-V2-Final
 
 on: 
   push:
   workflow_dispatch:
 
 env:
-  src_git: https://github.com/hanwckf/padavan-4.4.git
+  # МЕНЯЕМ НА СТАБИЛЬНЫЙ РЕПОЗИТОРИЙ ДЛЯ MT7628
+  src_git: https://github.com/hanwckf/rt-n56u.git
   build_dir: /opt/rt-n56u
   images_dir: /opt/images
   ENABLED_CFG: |
@@ -15,18 +16,17 @@ env:
     CONFIG_FIRMWARE_INCLUDE_TTYD
   DISABLED_CFG: |
     CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS
-    CONFIG_FIRMWARE_INCLUDE_SSSERVER
     CONFIG_FIRMWARE_INCLUDE_WIREGUARD
 
 jobs:
   build:
     name: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     strategy:
       matrix:
         include:
           - build_variant: "mt7628"
-            targets: "MI-4A_V2"
+            targets: "MI-NANO" # Используем MI-NANO как идеальную базу для 100M роутера
 
     steps:
       - name: Checkout
@@ -50,62 +50,31 @@ jobs:
           cd $build_dir/toolchain-mipsel
           sh dl_toolchain.sh
 
-      - name: Modify configs for V2 (MT7613)
+      - name: Modify configs for Mi 4A V2
         run: |
           cd $build_dir/trunk/configs/templates
           
-          echo "--- Available templates ---"
-          ls -1
+          # Берем MI-NANO.config за основу (он идеально подходит для MT7628)
+          cp MI-NANO.config MI-4A_V2.config
           
-          # Интеллектуальный поиск подходящего шаблона для MT7628
-          if [ -f MI-4A.config ]; then
-            CP_SRC="MI-4A.config"
-          elif [ -f mi-4a.config ]; then
-            CP_SRC="mi-4a.config"
-          elif [ -f MI-NANO.config ]; then
-            CP_SRC="MI-NANO.config"
-          elif [ -f mt7628.config ]; then
-            CP_SRC="mt7628.config"
-          else
-            # Берем любой конфиг, где в названии есть 7628 (без учета регистра)
-            CP_SRC=$(ls | grep -i "7628" | head -n 1)
-          fi
-          
-          if [ -z "$CP_SRC" ]; then
-            echo "Error: No MT7628 template found!"
-            exit 1
-          fi
-          
-          echo "Using $CP_SRC as base template for MI-4A_V2"
-          cp "$CP_SRC" MI-4A_V2.config
-          
-          # Замена драйвера 5ГГц на MT7613
+          # Включаем драйвер MT7613 (критично для 5ГГц на v2)
           sed -i 's/CONFIG_FIRMWARE_WIFI5_MT7612E=y/CONFIG_FIRMWARE_WIFI5_MT7613=y/g' MI-4A_V2.config
           
-          # Убеждаемся, что флаг MT7613 точно есть и активен
-          sed -i '/CONFIG_FIRMWARE_WIFI5_MT7613/d' MI-4A_V2.config
-          echo "CONFIG_FIRMWARE_WIFI5_MT7613=y" >> MI-4A_V2.config
+          # Если строки про MT7613 вообще нет, добавляем её
+          if ! grep -q "CONFIG_FIRMWARE_WIFI5_MT7613" MI-4A_V2.config; then
+            echo "CONFIG_FIRMWARE_WIFI5_MT7613=y" >> MI-4A_V2.config
+          fi
           
-          # Настройка процессора
-          sed -i 's/CONFIG_FIRMWARE_CPU_7621=y/CONFIG_FIRMWARE_CPU_7628=y/g' MI-4A_V2.config
-          
-          # Применяем включение/выключение функций
+          # Применяем твои функции
           for n in $ENABLED_CFG; do sed -i "/${n}/c${n}=y" MI-4A_V2.config; done
           for n in $DISABLED_CFG; do sed -i "/${n}/c${n}=n" MI-4A_V2.config; done
 
       - name: Start build
         run: |
           cd $build_dir/trunk
-          # Собираем прошивку
+          # В ветке 3.4 используется скрипт build_firmware_ci или build_firmware_modify
           fakeroot ./build_firmware_modify MI-4A_V2
-          
-          # Копируем результат в папку артефактов
-          if [ -f images/*.trx ]; then
-            cp -f images/*.trx $images_dir/MI-4A_V2.trx
-          else
-            echo "Error: Firmware file not found after build!"
-            exit 1
-          fi
+          cp -f images/*.trx $images_dir/MI-4A_V2.trx
 
       - name: Create archive
         if: ${{ success() }}
@@ -117,6 +86,6 @@ jobs:
         if: ${{ success() }}
         uses: actions/upload-artifact@v4
         with:
-          name: Padavan_V2_4.4_${{ env.image_suffix }}
+          name: Padavan_Mi4A_V2_${{ env.image_suffix }}
           path: ${{ env.images_dir }}/*.zip
           retention-days: 7
