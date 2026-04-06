@@ -5,11 +5,9 @@ on:
   workflow_dispatch:
 
 env:
-  # Репозиторий с ядром 4.4
   src_git: https://github.com/hanwckf/padavan-4.4.git
   build_dir: /opt/rt-n56u
   images_dir: /opt/images
-  # Настройки функционала (минимальный набор для стабильности)
   ENABLED_CFG: |
     CONFIG_FIRMWARE_INCLUDE_TCPDUMP
     CONFIG_FIRMWARE_INCLUDE_HTOP
@@ -37,7 +35,8 @@ jobs:
       - name: Prepare environment
         run: |
           sudo apt update
-          sudo apt install libtool-bin gperf python3-docutils autopoint gettext zip 7z build-essential
+          # Исправлены названия пакетов для Ubuntu 24.04
+          sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext zip p7zip-full build-essential libssl-dev
           mkdir -p $images_dir
 
       - name: Clone source
@@ -55,27 +54,27 @@ jobs:
       - name: Modify configs for V2 (MT7613)
         run: |
           cd $build_dir/trunk/configs/templates
-          # Используем конфиг MI-4A как базу для V2
+          # Берем MI-4A или MI-NANO как базу
           if [ -f MI-4A.config ]; then
             cp MI-4A.config MI-4A_V2.config
           else
             cp MI-NANO.config MI-4A_V2.config
           fi
           
-          # КЛЮЧЕВАЯ ПРАВКА: Замена драйвера 5ГГц на MT7613
+          # Настройка драйверов
           sed -i 's/CONFIG_FIRMWARE_WIFI5_MT7612E=y/CONFIG_FIRMWARE_WIFI5_MT7613=y/g' MI-4A_V2.config
-          # Удаляем дубликаты и принудительно включаем нужный драйвер
           sed -i '/CONFIG_FIRMWARE_WIFI5_MT7613/d' MI-4A_V2.config
           echo "CONFIG_FIRMWARE_WIFI5_MT7613=y" >> MI-4A_V2.config
           
-          # Применяем кастомные функции
+          # Настройка процессора (для Mi 4A 100M это MT7628)
+          sed -i 's/CONFIG_FIRMWARE_CPU_7621=y/CONFIG_FIRMWARE_CPU_7628=y/g' MI-4A_V2.config
+          
           for n in $ENABLED_CFG; do sed -i "/${n}/c${n}=y" MI-4A_V2.config; done
           for n in $DISABLED_CFG; do sed -i "/${n}/c${n}=n" MI-4A_V2.config; done
 
       - name: Start build
         run: |
           cd $build_dir/trunk
-          # Сборка прошивки под созданный нами конфиг
           fakeroot ./build_firmware_modify MI-4A_V2
           cp -f images/*.trx $images_dir/MI-4A_V2.trx
 
